@@ -30,63 +30,64 @@ def generate_heatmap_multi(kegg_decoder_file, output_folder, dpi, color, figsize
         df3 = df.iloc[2 * split_size :]
         pbar.update(2)
 
-    fig_w = 0.5 * (df.shape[1] - 2) + 19.5
-    if figsize is None:
-        figsize = (fig_w, 20)
+    # Dimensions and margin in inches, width scales
+    n_cols = df.shape[1] - 2
+    cell_size = 0.25
+    panel_w = max(n_cols * cell_size, 1.0)
+    fig_h = 20.0
+    margin_left = 0.3
+    cbar_w = 0.1
+    cbar_gap = 0.5
+    margin_right = 0.3
+    panel_fig_w = margin_left + panel_w + cbar_gap + cbar_w + margin_right
+    panel_fig_w = max(panel_fig_w, 8)
+    panel_figsize = (panel_fig_w, fig_h)
 
-    # Create a grid for the heatmap and colorbar
-    fig, axes = plt.subplots(1, 3, figsize=figsize)
-    cbar_ax = fig.add_axes([0.92, 0.4, 0.02, 0.2])  # Colorbar axis on the right
+    # In interest of limiting image size and RAM usage, an upper limit of 200 megapixels is set. If user supplied dpi crosses that, then image is rescaled to a lower limit of 600 dpi
+    #if resolution is below 200 MP, user supplied dpi is used
+    max_dpi = int((200 * 1_000_000 / (panel_fig_w * fig_h)) ** 0.5)
+    if dpi > max_dpi:
+        effective_dpi = max(600, max_dpi)
+        print(f"Warning: requested DPI {dpi} would exceed 200MP. "
+              f"Reducing to {effective_dpi} DPI.")
+        dpi = effective_dpi
 
-    with tqdm(total=3, desc="Creating heatmap parts") as pbar:
-        sns.heatmap(
-            df1.set_index("Function"),
-            cmap=f"{color}",
-            annot=False,
-            linewidths=0.5,
-            ax=axes[0],
-            cbar=False,
-        )
-        axes[0].set_title("Part 1")
-        axes[0].tick_params(axis="x", rotation=45)
-        axes[0].set_xticklabels(axes[0].get_xticklabels(), ha="right")
-        pbar.update(1)
+    def make_panel_fig():
+        f = plt.figure(figsize=panel_figsize, constrained_layout=False)
+        ax_left = margin_left / panel_fig_w
+        ax_right = (margin_left + panel_w) / panel_fig_w
+        ax = f.add_axes([ax_left, 0.15, ax_right - ax_left, 0.78])
+        cb_left = (margin_left + panel_w + cbar_gap) / panel_fig_w
+        cb_ax = f.add_axes([cb_left, 0.40, cbar_w / panel_fig_w, 0.20])
+        return f, ax, cb_ax
+    # panels are output to separate files
+    panels = [
+        (df1, "Part 1", "heatmap_figure_part1.png"),
+        (df2, "Part 2", "heatmap_figure_part2.png"),
+        (df3, "Part 3", "heatmap_figure_part3.png"),
+    ]
 
-        sns.heatmap(
-            df2.set_index("Function"),
-            cmap=f"{color}",
-            annot=False,
-            linewidths=0.5,
-            ax=axes[1],
-            cbar=False,
-        )
-        axes[1].set_title("Part 2")
-        axes[1].tick_params(axis="x", rotation=45)
-        axes[1].set_xticklabels(axes[0].get_xticklabels(), ha="right")
-        pbar.update(1)
+    figs = []
+    with tqdm(total=3, desc="Creating and saving heatmap parts") as pbar:
+        for df_part, title, fname in panels:
+            fig, ax, cb_ax = make_panel_fig()
+            sns.heatmap(
+                df_part.set_index("Function"),
+                cmap=f"{color}",
+                annot=False,
+                linewidths=0.5,
+                ax=ax,
+                cbar_ax=cb_ax,
+                cbar_kws={"label": "Pathway completeness"},
+            )
+            ax.set_title(title)
+            ax.tick_params(axis="x", rotation=45)
+            ax.set_xticklabels(ax.get_xticklabels(), ha="right")
+            ax.set_ylabel("")
+            out = os.path.join(output_folder, fname)
+            fig.savefig(out, dpi=dpi, bbox_inches="tight")
+            plt.close(fig)
+            figs.append(out)
+            pbar.update(1)
 
-        sns.heatmap(
-            df3.set_index("Function"),
-            cmap=f"{color}",
-            annot=False,
-            linewidths=0.5,
-            ax=axes[2],
-            cbar_ax=cbar_ax,
-            cbar_kws={"label": "Pathway completeness"},
-        )
-        axes[2].set_title("Part 3")
-        axes[2].tick_params(axis="x", rotation=45)
-        axes[2].set_xticklabels(axes[0].get_xticklabels(), ha="right")
-        pbar.update(1)
-
-        axes[1].set_ylabel("")
-        axes[2].set_ylabel("")
-
-    plt.tight_layout(rect=[0, 0, 0.9, 1])
-    output_file = os.path.join(output_folder, "heatmap_figure.png")
-    with tqdm(total=1, desc="Saving plot") as pbar:
-        plt.savefig(output_file, dpi=dpi, bbox_inches="tight")
-        pbar.update(1)
-    plt.show()
-
-    return fig, axes
+    return figs
